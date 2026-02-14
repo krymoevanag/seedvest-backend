@@ -34,6 +34,7 @@ class User(AbstractUser):
             self.save()
 
             from notifications.models import Notification
+            from .emails import send_membership_approved_email
 
             Notification.objects.create(
                 recipient=self,
@@ -42,6 +43,9 @@ class User(AbstractUser):
                 type="SUCCESS",
                 link="/dashboard",
             )
+            
+            # Send Email
+            send_membership_approved_email(self)
 
     def generate_membership_number(self):
         # Format: MM + YY + Month + Padded ID (e.g., MM2602001)

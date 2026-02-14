@@ -11,6 +11,7 @@ from .views import (
     PasswordResetRequestView,
     PasswordResetConfirmView,
     LogoutView,
+    AdminStatsView,
 )
 
 # DRF router
@@ -39,6 +40,12 @@ urlpatterns = [
         "pending-users/",
         PendingUsersView.as_view(),
         name="pending-users",
+    ),
+    
+    path(
+        "admin-stats/",
+        AdminStatsView.as_view(),
+        name="admin-stats",
     ),
 
     # Password reset

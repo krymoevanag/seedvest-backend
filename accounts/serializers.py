@@ -99,6 +99,30 @@ class MembershipActivationSerializer(serializers.Serializer):
     membership_number = serializers.CharField(max_length=20)
 
 
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "username",
+            "email",
+            "first_name",
+            "last_name",
+            "phone_number",
+            "role",
+            "membership_number",
+            "is_approved",
+        )
+        read_only_fields = (
+            "id",
+            "username",
+            "email",
+            "role",
+            "membership_number",
+            "is_approved",
+        )
+
+
 # ====================================================
 # PASSWORD RESET
 # ====================================================

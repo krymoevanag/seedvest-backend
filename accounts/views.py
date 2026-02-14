@@ -20,13 +20,18 @@ from rest_framework.generics import ListAPIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .emails import send_password_reset_email
+from .emails import (
+    send_password_reset_email,
+    send_membership_rejected_email,
+    send_role_updated_email,
+)
 from .permissions import IsAdminOrTreasurer
 from .serializers import (
     RegisterSerializer,
     PendingUserSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    UserProfileSerializer,
 )
 from .tokens import account_activation_token
 
@@ -84,6 +89,9 @@ class LoginView(APIView):
             {
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
+                "role": user.role,
+                "user_id": user.id,
+                "full_name": f"{user.first_name} {user.last_name}",
             },
             status=status.HTTP_200_OK,
         )
@@ -154,6 +162,68 @@ class UserViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK,
         )
 
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        user = self.get_object()
+        reason = request.data.get("reason", "Application does not meet current criteria.")
+
+        send_membership_rejected_email(user, reason)
+
+        # Optionally delete the user or mark as rejected?
+        # For now, we'll just deactivate them and maybe add a rejected flag if we had one.
+        # Or just leave them inactive.
+        # Let's just send the email and maybe deactivate to be sure.
+        user.is_active = False
+        user.save()
+
+        return Response(
+            {"message": "User rejected and email sent."},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=["post"])
+    def set_role(self, request, pk=None):
+        user = self.get_object()
+        new_role = request.data.get("role")
+
+        if new_role not in dict(User.ROLE_CHOICES):
+            return Response(
+                {"error": "Invalid role"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.role = new_role
+        user.save()
+
+        send_role_updated_email(user, new_role)
+
+        return Response(
+            {"message": f"Role updated to {new_role} and email sent."},
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=["get", "patch", "put"], permission_classes=[IsAuthenticated])
+    def me(self, request):
+        user = request.user
+        
+        if request.method == "GET":
+            serializer = UserProfileSerializer(user)
+            return Response(serializer.data)
+        
+        elif request.method in ["PATCH", "PUT"]:
+            serializer = UserProfileSerializer(
+                user,
+                data=request.data,
+                partial=True,
+            )
+            if serializer.is_valid():
+                serializer.save()
+                return Response(serializer.data)
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
 
 # ====================================================
 # LIST PENDING USERS
@@ -177,8 +247,8 @@ class PasswordResetRequestView(APIView):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        email = serializer.validated_data["email"]
-        user = User.objects.filter(email=email).first()
+        email = serializer.validated_data["email"].strip()
+        user = User.objects.filter(email__iexact=email).first()
 
         if user:
             uid = urlsafe_base64_encode(force_bytes(user.pk))
@@ -259,3 +329,32 @@ class LogoutView(APIView):
             {"detail": "Logged out successfully"},
             status=status.HTTP_200_OK,
         )
+
+
+# ====================================================
+# ADMIN DASHBOARD STATS
+# ====================================================
+from django.db.models import Sum
+from finance.models import Contribution
+
+class AdminStatsView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated, IsAdminOrTreasurer]
+
+    def get(self, request):
+        total_users = User.objects.count()
+        pending_approvals = User.objects.filter(is_approved=False).count()
+        
+        total_contributions = Contribution.objects.filter(status='PAID').aggregate(
+            total=Sum('amount')
+        )['total'] or 0.00
+        
+        # Pending contributions count
+        pending_contributions = Contribution.objects.filter(status='PENDING').count()
+
+        return Response({
+            "total_users": total_users,
+            "pending_approvals": pending_approvals,
+            "total_contributions": total_contributions,
+            "pending_contributions_count": pending_contributions,
+        })
